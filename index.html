@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>EShare Pro - 실시간 화면 공유</title>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <!-- QR Code 생성 라이브러리 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    :root {
+      --bg-main: #0b0f19;
+      --card-bg: #161e2e;
+      --card-border: #26334d;
+      --primary: #00d2ff;
+      --accent: #3a7bd5;
+      --danger: #f43f5e;
+      --text-white: #f8fafc;
+      --text-dim: #94a3b8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Pretendard', sans-serif; }
+    body { background-color: var(--bg-main); color: var(--text-white); display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 1rem; }
+
+    .app-container { width: 100%; max-width: 1000px; display: flex; flex-direction: column; gap: 1.2rem; }
+    
+    .header-nav { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 1rem; }
+    .logo { font-size: 1.5rem; font-weight: 800; background: linear-gradient(90deg, var(--primary), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .mode-switch { display: flex; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 30px; padding: 4px; gap: 4px; }
+    .mode-btn { border: none; background: transparent; color: var(--text-dim); padding: 0.5rem 1.2rem; border-radius: 20px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .mode-btn.active { background: var(--accent); color: white; }
+
+    .eshare-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 1.25rem; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+
+    .receiver-info { display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); border-radius: 12px; padding: 0.8rem 1.2rem; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem; }
+    .pin-code { font-size: 2rem; font-weight: 900; letter-spacing: 4px; color: var(--primary); font-family: monospace; }
+    #qrcode { background: white; padding: 4px; border-radius: 6px; }
+
+    .video-viewport { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    
+    canvas.annotation-layer {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 10;
+      touch-action: none;
+      pointer-events: none;
+    }
+    canvas.annotation-layer.drawing-active { pointer-events: auto; }
+
+    .control-bar { position: absolute; bottom: 0.8rem; left: 50%; transform: translateX(-50%); z-index: 20; background: rgba(11, 15, 25, 0.85); backdrop-filter: blur(12px); border: 1px solid var(--card-border); padding: 0.5rem 1rem; border-radius: 30px; display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; justify-content: center; }
+    .annotation-tools { display: flex; align-items: center; gap: 0.6rem; background: rgba(0,0,0,0.4); padding: 0.4rem 0.8rem; border-radius: 20px; border: 1px solid var(--card-border); }
+
+    .sender-box { display: flex; flex-direction: column; gap: 1rem; max-width: 500px; margin: 0 auto; width: 100%; }
+    .pin-input { font-size: 1.8rem; text-align: center; letter-spacing: 6px; font-weight: 700; font-family: monospace; padding: 0.6rem; background: #0b0f19; border: 1px solid var(--card-border); color: #fff; border-radius: 12px; outline: none; }
+    
+    .touchpad-area { width: 100%; height: 160px; background: #0b0f19; border: 2px dashed var(--card-border); border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-dim); touch-action: none; user-select: none; }
+    .remote-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-top: 0.8rem; }
+
+    .btn { background: var(--accent); color: white; border: none; padding: 0.6rem 1rem; border-radius: 8px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-size: 0.85rem; display: inline-flex; justify-content: center; align-items: center; gap: 0.4rem; }
+    .btn:hover { opacity: 0.9; }
+    .btn.primary { background: linear-gradient(135deg, var(--primary), var(--accent)); color: #000; font-weight: 800; }
+    .btn.active { background: #10b981; color: white; }
+    .btn.danger { background: var(--danger); }
+    .btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+
+    .status-badge { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; padding: 0.3rem 0.8rem; border-radius: 20px; background: rgba(255,255,255,0.05); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; }
+    .dot.online { background: #10b981; box-shadow: 0 0 8px #10b981; }
+
+    input[type="color"] { border: none; width: 26px; height: 26px; border-radius: 50%; cursor: pointer; background: transparent; }
+    input[type="range"] { accent-color: var(--primary); width: 80px; cursor: pointer; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <div class="app-container">
+    <div class="header-nav">
+      <div class="logo">EShare Pro</div>
+      <div class="mode-switch">
+        <button class="mode-btn active" id="modeReceiverBtn" onclick="switchRole('receiver')">📺 수신기 (메인 TV)</button>
+        <button class="mode-btn" id="modeSenderBtn" onclick="switchRole('sender')">📱 송신기 (내 기기)</button>
+      </div>
+    </div>
+
+    <!-- 1. 수신기 View -->
+    <div id="receiverView">
+      <div class="eshare-card">
+        <div class="receiver-info">
+          <div>
+            <div style="font-size: 0.8rem; color: var(--text-dim);">접속 PIN 코드</div>
+            <span class="pin-code" id="displayPin">------</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 1rem;">
+            <div id="qrcode"></div>
+            <div class="status-badge">
+              <span id="rxStatusDot" class="dot"></span>
+              <span id="rxStatusText">연결 대기 중</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="video-viewport">
+          <video id="receiverVideo" autoplay playsinline muted></video>
+          <canvas id="rxCanvas" class="annotation-layer"></canvas>
+
+          <div class="control-bar">
+            <div class="annotation-tools">
+              <button class="btn" id="rxPenToggle" onclick="toggleDrawingMode()">✏️ 판서 모드</button>
+              <input type="color" id="rxPenColor" value="#ff0055">
+              <input type="range" id="rxPenSize" min="2" max="20" value="4">
+              <button class="btn danger" onclick="clearCanvas(true)">🧹 초기화</button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem;">
+              <button class="btn" onclick="enableAudio()">🔊 소리 켜기</button>
+              <input type="range" id="rxVolume" min="0" max="1" step="0.05" value="1">
+            </div>
+            <button class="btn" onclick="togglePiP()">확장(PiP)</button>
+            <button class="btn" onclick="toggleFullscreen()">전체화면</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 송신기 View -->
+    <div id="senderView" class="hidden">
+      <div class="eshare-card">
+        <div class="sender-box">
+          <div style="text-align: center;">
+            <h2>수신기 연결 및 전송</h2>
+            <p style="color: var(--text-dim); font-size: 0.85rem; margin-top: 4px;">PIN 입력 후 원하는 송신 방식을 선택하세요.</p>
+          </div>
+
+          <input type="text" id="inputPin" class="pin-input" maxlength="6" placeholder="000000">
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem;">
+            <button class="btn primary" id="btnShareScreen" onclick="startStream('screen')">🖥️ 화면 미러링</button>
+            <button class="btn primary" id="btnShareCamera" onclick="startStream('camera')">📷 카메라 중계</button>
+          </div>
+
+          <div class="video-viewport" id="txViewport" style="height: 200px; display: none;">
+            <video id="senderVideo" autoplay playsinline muted></video>
+            <canvas id="txCanvas" class="annotation-layer"></canvas>
+            
+            <div class="control-bar">
+              <div class="annotation-tools">
+                <button class="btn" id="txPenToggle" onclick="toggleDrawingMode()">✏️ 판서하기</button>
+                <input type="color" id="txPenColor" value="#ff0055">
+                <button class="btn danger" onclick="clearCanvas(true)">🧹 초기화</button>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn danger" id="btnDisconnect" onclick="disconnect()" disabled>연결 종료</button>
+
+          <div style="margin-top: 0.5rem; border-top: 1px solid var(--card-border); padding-top: 1rem;">
+            <h3 style="font-size: 0.95rem; margin-bottom: 0.6rem; text-align: center;">🎮 터치패드 & 리모컨</h3>
+            <div class="touchpad-area" id="touchpad">
+              <span>👆 터치/드래그하여 제어</span>
+            </div>
+
+            <div class="remote-actions">
+              <button class="btn" onclick="sendControl('VOL_DOWN')">🔉 음량 -</button>
+              <button class="btn" onclick="sendControl('VOL_UP')">🔊 음량 +</button>
+              <button class="btn" onclick="sendControl('MUTE')">🔇 음소거</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = { databaseURL: "https://pal-inte-db-default-rtdb.asia-southeast1.firebasedatabase.app/" };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // WebRTC 연결 안정성을 위해 ICE 설정 강화
+    const rtcConfig = { 
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ],
+      iceCandidatePoolSize: 10
+    };
+
+    let currentRole = 'receiver';
+    let currentPin = '';
+    let peerConnection = null;
+    let dataChannel = null;
+    let localStream = null;
+    let roomRef = null;
+
+    let isDrawingMode = false;
+    let isDrawing = false;
+
+    const receiverVideo = document.getElementById('receiverVideo');
+    const senderVideo = document.getElementById('senderVideo');
+    const displayPin = document.getElementById('displayPin');
+    const inputPin = document.getElementById('inputPin');
+    const rxCanvas = document.getElementById('rxCanvas');
+    const txCanvas = document.getElementById('txCanvas');
+
+    window.onload = () => {
+      setupCanvasResize();
+      const urlParams = new URLSearchParams(window.location.search);
+      const pinParam = urlParams.get('pin');
+      if (pinParam) {
+        switchRole('sender');
+        inputPin.value = pinParam;
+      } else {
+        initReceiver();
+      }
+    };
+
+    function switchRole(role) {
+      currentRole = role;
+      document.getElementById('modeReceiverBtn').classList.toggle('active', role === 'receiver');
+      document.getElementById('modeSenderBtn').classList.toggle('active', role === 'sender');
+      document.getElementById('receiverView').classList.toggle('hidden', role !== 'receiver');
+      document.getElementById('senderView').classList.toggle('hidden', role !== 'sender');
+
+      if (role === 'receiver' && !currentPin) initReceiver();
+    }
+
+    // [수신기]
+    function initReceiver() {
+      currentPin = Math.floor(100000 + Math.random() * 900000).toString();
+      displayPin.textContent = currentPin;
+
+      const shareUrl = `${window.location.origin}${window.location.pathname}?pin=${currentPin}`;
+      document.getElementById('qrcode').innerHTML = "";
+      new QRCode(document.getElementById('qrcode'), { text: shareUrl, width: 64, height: 64 });
+
+      roomRef = db.ref(`eshare_rooms/${currentPin}`);
+      roomRef.remove();
+
+      setRxStatus('송신기 연결 대기 중...', false);
+
+      // Offer 감지
+      roomRef.child('offer').on('value', async (snapshot) => {
+        const offer = snapshot.val();
+        if (offer && !peerConnection) {
+          await createReceiverPeer(offer);
+        }
+      });
+
+      // Sender Candidates 수신
+      roomRef.child('senderCandidates').on('child_added', (snapshot) => {
+        const candidate = snapshot.val();
+        if (candidate && peerConnection) {
+          peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.log(e));
+        }
+      });
+
+      // DB 캔버스 판서 동기화 Fallback
+      roomRef.child('drawCmd').on('value', (snapshot) => {
+        const data = snapshot.val();
+        if (data && currentRole === 'receiver') {
+          drawOnCanvas(rxCanvas, data.type, data.normX, data.normY, data.color, data.size);
+        }
+      });
+    }
+
+    async function createReceiverPeer(offer) {
+      peerConnection = new RTCPeerConnection(rtcConfig);
+
+      peerConnection.ontrack = (e) => {
+        if (e.streams && e.streams[0]) {
+          receiverVideo.srcObject = e.streams[0];
+          receiverVideo.play().catch(err => console.log("Auto-play override:", err));
+          setRxStatus('화면 수신 중 (연결됨)', true);
+        }
+      };
+
+      peerConnection.ondatachannel = (e) => {
+        dataChannel = e.channel;
+        dataChannel.onmessage = (msg) => handleDataMessage(JSON.parse(msg.data));
+      };
+
+      peerConnection.onicecandidate = (e) => {
+        if (e.candidate) {
+          roomRef.child('receiverCandidates').push(e.candidate.toJSON());
+        }
+      };
+
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      await roomRef.child('answer').set({ sdp: answer.sdp, type: answer.type });
+    }
+
+    // [송신기]
+    async function startStream(type) {
+      const pin = inputPin.value.trim();
+      if (pin.length !== 6) return alert('6자리 PIN 코드를 입력해주세요.');
+
+      currentPin = pin;
+      roomRef = db.ref(`eshare_rooms/${currentPin}`);
+
+      try {
+        if (type === 'screen') {
+          localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        } else {
+          localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+        }
+
+        senderVideo.srcObject = localStream;
+        document.getElementById('txViewport').style.display = 'flex';
+
+        peerConnection = new RTCPeerConnection(rtcConfig);
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+        dataChannel = peerConnection.createDataChannel("eshareControl");
+        dataChannel.onmessage = (msg) => handleDataMessage(JSON.parse(msg.data));
+
+        peerConnection.onicecandidate = (e) => {
+          if (e.candidate) {
+            roomRef.child('senderCandidates').push(e.candidate.toJSON());
+          }
+        };
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        await roomRef.child('offer').set({ sdp: offer.sdp, type: offer.type });
+
+        roomRef.child('answer').on('value', async (snapshot) => {
+          const answer = snapshot.val();
+          if (answer && peerConnection && !peerConnection.currentRemoteDescription) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+          }
+        });
+
+        roomRef.child('receiverCandidates').on('child_added', (snapshot) => {
+          const candidate = snapshot.val();
+          if (candidate && peerConnection) {
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.log(e));
+          }
+        });
+
+        document.getElementById('btnShareScreen').disabled = true;
+        document.getElementById('btnShareCamera').disabled = true;
+        document.getElementById('btnDisconnect').disabled = false;
+
+        localStream.getVideoTracks()[0].onended = disconnect;
+
+      } catch (err) {
+        alert('스트리밍 시작 실패 (HTTPS 및 권한을 확인하세요): ' + err.message);
+      }
+    }
+
+    // [판서 기능]
+    function setupCanvasResize() {
+      const resize = () => {
+        [rxCanvas, txCanvas].forEach(canvas => {
+          if (canvas.parentElement) {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+          }
+        });
+      };
+      resize();
+      window.addEventListener('resize', resize);
+
+      setupDrawingEvents(rxCanvas);
+      setupDrawingEvents(txCanvas);
+    }
+
+    function toggleDrawingMode() {
+      isDrawingMode = !isDrawingMode;
+      const targetCanvas = currentRole === 'receiver' ? rxCanvas : txCanvas;
+      const btn = currentRole === 'receiver' ? document.getElementById('rxPenToggle') : document.getElementById('txPenToggle');
+
+      targetCanvas.classList.toggle('drawing-active', isDrawingMode);
+      btn.classList.toggle('active', isDrawingMode);
+    }
+
+    function setupDrawingEvents(canvas) {
+      const getPos = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+          normX: (clientX - rect.left) / rect.width,
+          normY: (clientY - rect.top) / rect.height
+        };
+      };
+
+      const start = (e) => {
+        if (!isDrawingMode) return;
+        isDrawing = true;
+        const pos = getPos(e);
+        drawOnCanvas(canvas, 'start', pos.normX, pos.normY, getPenColor(), getPenSize());
+        broadcastDraw('start', pos.normX, pos.normY);
+      };
+
+      const move = (e) => {
+        if (!isDrawing || !isDrawingMode) return;
+        const pos = getPos(e);
+        drawOnCanvas(canvas, 'move', pos.normX, pos.normY, getPenColor(), getPenSize());
+        broadcastDraw('move', pos.normX, pos.normY);
+      };
+
+      const stop = () => {
+        if (isDrawing) {
+          isDrawing = false;
+          broadcastDraw('stop');
+        }
+      };
+
+      canvas.addEventListener('mousedown', start);
+      canvas.addEventListener('mousemove', move);
+      canvas.addEventListener('mouseup', stop);
+
+      canvas.addEventListener('touchstart', start);
+      canvas.addEventListener('touchmove', move);
+      canvas.addEventListener('touchend', stop);
+    }
+
+    function getPenColor() {
+      return currentRole === 'receiver' ? document.getElementById('rxPenColor').value : document.getElementById('txPenColor').value;
+    }
+
+    function getPenSize() {
+      return currentRole === 'receiver' ? document.getElementById('rxPenSize').value : 4;
+    }
+
+    function drawOnCanvas(canvas, type, normX, normY, color, size) {
+      const ctx = canvas.getContext('2d');
+      const x = normX * canvas.width;
+      const y = normY * canvas.height;
+
+      if (type === 'start') {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = size;
+        ctx.lineCap = 'round';
+      } else if (type === 'move') {
+        ctx.lineTo(x, y);
+        ctx.stroke();
+      } else if (type === 'clear') {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    function broadcastDraw(type, normX = 0, normY = 0) {
+      const payload = { action: 'DRAW', type, normX, normY, color: getPenColor(), size: getPenSize() };
+      sendControlData(payload);
+      if (roomRef && currentRole === 'sender') {
+        roomRef.child('drawCmd').set(payload);
+      }
+    }
+
+    function clearCanvas(broadcast = false) {
+      const targetCanvas = currentRole === 'receiver' ? rxCanvas : txCanvas;
+      drawOnCanvas(targetCanvas, 'clear');
+      if (broadcast) broadcastDraw('clear');
+    }
+
+    function sendControlData(data) {
+      if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(JSON.stringify(data));
+      }
+    }
+
+    function sendControl(action) { sendControlData({ action }); }
+
+    function handleDataMessage(data) {
+      if (data.action === 'DRAW') {
+        const targetCanvas = currentRole === 'receiver' ? rxCanvas : txCanvas;
+        drawOnCanvas(targetCanvas, data.type, data.normX, data.normY, data.color, data.size);
+      }
+    }
+
+    function enableAudio() {
+      receiverVideo.muted = false;
+      receiverVideo.volume = document.getElementById('rxVolume').value;
+    }
+
+    document.getElementById('rxVolume').oninput = (e) => receiverVideo.volume = e.target.value;
+
+    async function togglePiP() {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else if (receiverVideo.readyState >= 2) await receiverVideo.requestPictureInPicture();
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) receiverVideo.requestFullscreen();
+      else document.exitFullscreen();
+    }
+
+    function setRxStatus(text, isOnline) {
+      document.getElementById('rxStatusText').textContent = text;
+      document.getElementById('rxStatusDot').classList.toggle('online', isOnline);
+    }
+
+    function disconnect() {
+      if (peerConnection) peerConnection.close();
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
+      peerConnection = null;
+      localStream = null;
+
+      document.getElementById('btnShareScreen').disabled = false;
+      document.getElementById('btnShareCamera').disabled = false;
+      document.getElementById('btnDisconnect').disabled = true;
+      document.getElementById('txViewport').style.display = 'none';
+
+      clearCanvas();
+      if (currentRole === 'receiver') initReceiver();
+    }
+  </script>
+</body>
+</html>
