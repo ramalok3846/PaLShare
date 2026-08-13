@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>EShare Pro - 실시간 화면 공유</title>
+  <title>PaLShare</title>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
@@ -181,13 +181,11 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    // WebRTC 연결 안정성을 위해 ICE 설정 강화
     const rtcConfig = { 
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
-      ],
-      iceCandidatePoolSize: 10
+      ]
     };
 
     let currentRole = 'receiver';
@@ -243,7 +241,7 @@
 
       setRxStatus('송신기 연결 대기 중...', false);
 
-      // Offer 감지
+      // Offer 수신 처리
       roomRef.child('offer').on('value', async (snapshot) => {
         const offer = snapshot.val();
         if (offer && !peerConnection) {
@@ -251,15 +249,7 @@
         }
       });
 
-      // Sender Candidates 수신
-      roomRef.child('senderCandidates').on('child_added', (snapshot) => {
-        const candidate = snapshot.val();
-        if (candidate && peerConnection) {
-          peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.log(e));
-        }
-      });
-
-      // DB 캔버스 판서 동기화 Fallback
+      // DB 판서 동기화 Fallback
       roomRef.child('drawCmd').on('value', (snapshot) => {
         const data = snapshot.val();
         if (data && currentRole === 'receiver') {
@@ -274,7 +264,7 @@
       peerConnection.ontrack = (e) => {
         if (e.streams && e.streams[0]) {
           receiverVideo.srcObject = e.streams[0];
-          receiverVideo.play().catch(err => console.log("Auto-play override:", err));
+          receiverVideo.play().catch(err => console.log("Auto-play:", err));
           setRxStatus('화면 수신 중 (연결됨)', true);
         }
       };
@@ -291,6 +281,15 @@
       };
 
       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      
+      // Remote Description 완료 후 Candidate 이벤트 감지
+      roomRef.child('senderCandidates').on('child_added', (snapshot) => {
+        const candidate = snapshot.val();
+        if (candidate && peerConnection) {
+          peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.log(e));
+        }
+      });
+
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
       await roomRef.child('answer').set({ sdp: answer.sdp, type: answer.type });
@@ -351,7 +350,7 @@
         localStream.getVideoTracks()[0].onended = disconnect;
 
       } catch (err) {
-        alert('스트리밍 시작 실패 (HTTPS 및 권한을 확인하세요): ' + err.message);
+        alert('스트리밍 시작 실패 (HTTPS 연동 필요): ' + err.message);
       }
     }
 
